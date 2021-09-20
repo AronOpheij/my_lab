@@ -359,6 +359,158 @@ class Operator(OperatorBase):
             except:
                 self.logger.warning('An error occurred while trying to save Operator properties to yaml file')
 
+    def do_iv_scan(self, param=None):
+        """
+        An example of a method that performs an IV curve measurement (based on parameters in the config file).
+        This method can be run from a GUI, from command line or other script
+        This scan sweeps the voltage on V+ and reads both AI channels.
+
+        :param param: optional dictionary of parameters that will used to update the scan parameters
+        :type param: dict
+        :return: measured Vf and If
+        :rtype: list, list
+        """
+        if type(param) is dict:
+            self.logger.info('Updating scan properties with supplied parameters dictionary.')
+            self.properties['iv scan'].update(param)
+        # Start with various checks and warn+return if something is wrong
+        if self._busy:
+            self.logger.error('Scan should not be started while Operator is busy.')
+            return
+        if 'iv scan' not in self.properties:
+            self.logger.error("The config file or properties dict should contain 'iv scan' section.")
+            return
+        required_keys = ['R', 'start', 'stop', 'step', 'ai_ch_Vf', 'ai_ch_Vr']
+        if not all(key in self.properties['iv scan'] for key in required_keys):
+            self.logger.error("'iv scan' should contain: "+', '.join(required_keys))
+            return
+        try:
+            R = self.properties['iv scan']['R']
+            start = self.properties['iv scan']['start']
+            stop = self.properties['iv scan']['stop']
+            step = self.properties['iv scan']['step']
+            ai_ch_Vf = int(self.properties['iv scan']['ai_ch_Vf'])
+            ai_ch_Vr = int(self.properties['iv scan']['ai_ch_Vr'])
+        except:
+            self.logger.error("Error occured while reading scan config values")
+            return
+        if ai_ch_Vf not in [1,2] or ai_ch_Vr not in [1,2]:
+            self.logger.error("ai_ch_Vf and ai_ch_If channel need to be 1 or 2")
+            return
+        if 'stabilize_time' in self.properties['iv scan']:
+            stabilize = self.properties['iv scan']['stabilize_time']
+        else:
+            self.logger.info("stabilize_time not found in config, using 0s")
+            stabilize = 0
+        num_points = np.int(round( (stop-start)/step+1 ))  # use round to catch the occasional rounding error
+        if num_points <= 0:
+            self.logger.error("Start, stop and step result in 0 or fewer points to sweep")
+            return
+        current_unit_conversions = {'A': 1, 'mA': 0.001}
+        current_unit = self.properties.setdefault('y_units', 'A')
+        if current_unit not in current_unit_conversions:
+            self.logger.warning('unknown y_unit: {}, assuming A'.format(current_unit))
+            self.properties['']
+        current_conversion = current_unit_conversions[current_unit]
+
+
+        self.voltages_to_scan = np.linspace(start, stop, num_points)
+
+        self.scan_voltages = []
+        self.measured_Vf = []
+        self.measured_Vr = []
+        self.calculated_If = []
+
+        self._busy = True  # indicate that operator is busy
+
+        for i, voltage in enumerate(self.voltages_to_scan):
+            self.logger.debug('applying {} to V+'.format(voltage))
+            self.instrument.power_supply(voltage)
+            sleep(stabilize)
+            measured = self.analog_in()
+            Vf = measured[ai_ch_Vf - 1]
+            Vr = measured[ai_ch_Vr - 1]
+            If = Vr / R / current_conversion
+            self.measured_Vf.append(Vf)
+            self.measured_Vr.append(Vr)
+            self.calculated_If.append(If)
+            self.scan_voltages.append(voltage)
+
+            # The remainder of the loop adds functionality to plot data and pause and stop the scan when it's run from a gui:
+            self._new_scan_data = True
+            # before the end of the loop: halt if pause is True
+            while self._pause:
+                sleep(0.05)
+                if self._stop: break
+            # if (soft) stop was requested, break out of loop
+            if self._stop:
+                break
+
+        self._stop = False  # reset stop flag to false
+        self._busy = False  # indicate operator is not busy anymore
+        self._pause = False  # is this necessary?
+
+        return self.measured_Vf, self.calculated_If
+
+    def save_IV_scan(self, filename, metadata=None, store_conf=False):
+        """
+        Store data in xarray Dataset and save to netCDF4 file.
+        Optional metadata can be passed as a dict. Note that the keys should be strings and the values should be numbers or strings.
+        Optionally stores the entire Operator properties dictionary to a yaml file of the same name.
+
+        To load data:
+        import xarray as xr
+        xr.load_dataset(filename)
+
+        :param filename: full path and filename
+        :type filename: str
+        :param metadata: optional additional data to store (default: None)
+        :type metadata: dict
+        :param store_conf: store Operator properties in yaml file (default: False)
+        :type store_conf: bool
+        """
+        # First test if the required data arrays have been generated (i.e. if the scan has run)
+        if not all(hasattr(opr, var) for var in ['measured_Vf', 'measured_Vr', 'calculated_If', 'scan_voltages']):
+            self.logger.warning('no data to save yet')
+            return
+        if os.path.exists(filename):
+            self.logger.warning('overwriting existing file: {}'.format(filename))
+        self.logger.debug('Saving data')
+        data = xr.Dataset(
+            coords={
+                "scan_voltage": (["scan_voltage"], self.scan_voltages, {"units": 'V'})
+            },
+            data_vars={
+                "measured_Vf": (["scan_voltage"], self.measured_Vf, {"units":'V'})
+                "measured_Vr": (["scan_voltage"], self.measured_Vr, {"units": 'V'})
+                "calculated_If": (["scan_voltage"], self.measured_Vf, {"units": 'V'})
+            },
+            attrs={
+                "time": datetime.now().strftime('%d-%m-%YT%H:%M:%S'),
+            }
+        )
+        for key in ['user', 'config_file']:
+            if key in self.properties:
+                data.attrs[key] = self.properties[key]
+        # Add all numeric and string keys
+        for key, value in self.properties['scan'].items():
+            if isinstance(value, (int, float, bool, str)):
+                data.attrs[key] = value
+        if type(metadata) is dict:
+            data.attrs.update(metadata)  # add the optional metadata to the Dataset attributes
+        self.data = data
+        data.to_netcdf(filename)
+        self.logger.info('Data saved in {}'.format(filename))
+
+        if store_conf:
+            try:
+                self.logger.info('Storing Operator properties in yaml file')
+                yml_fname = os.path.splitext(filename)[0] + '.yml'
+                with open(yml_fname, 'w') as f:
+                    yaml.safe_dump(self.properties, f)
+            except:
+                self.logger.warning('An error occurred while trying to save Operator properties to yaml file')
+
     def disconnect_devices(self):
         """
         Close connection to all instruments/devices used by this operator.
@@ -401,7 +553,8 @@ if __name__ == "__main__":
     instrument = DfwController()
 
     opr = Operator(instrument)
-    opr.load_config()
+    config = os.path.join(labphew.repository_path, 'examples', 'my_ad2_conf.yml')
+    opr.load_config(config)
 
-    x, y = opr.do_scan()
+    x, y = opr.do_iv_scan()
     plt.plot(x,y)

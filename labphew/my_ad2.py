@@ -38,10 +38,10 @@ def main(config_file = None):
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Load your classes and create your gui:
 
-    # from labphew.controller.digilent.waveforms import DfwController  If you were to use with real device
-    from labphew.controller.digilent.waveforms import SimulatedDfwController as DfwController  # To test with simulated device
+    from labphew.controller.digilent.waveforms import DfwController  # If you were to use with real device
+    # from labphew.controller.digilent.waveforms import SimulatedDfwController as DfwController  # To test with simulated device
     from labphew.model.analog_discovery_2_model import Operator
-    from labphew.view.analog_discovery_2_view import MonitorWindow, ScanWindow
+    from labphew.view.analog_discovery_2_view import MonitorWindow, ScanWindow, ScanIVWindow
 
     instrument = DfwController()
     opr = Operator(instrument)
@@ -54,8 +54,10 @@ def main(config_file = None):
     main_gui = MonitorWindow(opr)
     # To add Scan window(s) to the Monitor window use the following code.
     scan_1 = ScanWindow(opr, parent=main_gui)
+    scan_2 = ScanIVWindow(opr, parent=main_gui)
     scans = {
-        'Sweep &voltage': [scan_1, {'shortcut':"Ctrl+Shift+V", 'statusTip':'Voltage sweep scan'}]  # note that the dictionary is optional
+        'Sweep &voltage': [scan_1, {'shortcut':"Ctrl+Shift+V", 'statusTip':'Voltage sweep scan'}],  # note that the dictionary is optional
+        '&IV curve': [scan_2]
              }
     main_gui.load_scan_guis(scans)
     main_gui.show()  # make sure the GUI will be displayed

@@ -443,6 +443,7 @@ class Operator(OperatorBase):
             if self._stop:
                 break
 
+        self.instrument.power_supply(0)
         self._stop = False  # reset stop flag to false
         self._busy = False  # indicate operator is not busy anymore
         self._pause = False  # is this necessary?

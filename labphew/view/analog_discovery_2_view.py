@@ -651,7 +651,7 @@ class ScanIVWindow(ScanWindowBase):
 
         self.scan_step_spinbox = QDoubleSpinBox(suffix='V', minimum=-100, singleStep=0.001, valueChanged=self.scan_step_value)
 
-        self.R_spinbox = QDoubleSpinBox(suffix='R', minimum=1, maximum=1e9, valueChanged=
+        self.R_spinbox = QDoubleSpinBox(suffix='\u03A9', minimum=1, maximum=1e9, valueChanged=
             lambda new_value: self.operator.properties[self.scan_name].update({'R':new_value}))
 
         self.scan_start_label = QLabel('start')
@@ -842,6 +842,7 @@ class ScanIVWindow(ScanWindowBase):
         if self.operator._new_scan_data:
             self.operator._new_scan_data = False
             self.curve1.setData(self.operator.measured_Vf, self.operator.calculated_If)
+            self.plot1.setXRange(0, max(self.operator.measured_Vf))
         if self.scan_thread.isFinished():
             self.logger.debug('Scan thread is finished')
             self.scan_timer.stop()
